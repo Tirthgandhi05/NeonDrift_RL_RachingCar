@@ -34,6 +34,7 @@ from fastapi import FastAPI
 
 from env.neondrift_env import NeonDriftEnv, DiscreteActionWrapper, MAX_RAY_LEN, MAX_SPEED
 from inference.model_loader import load_model, is_discrete
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 # ─────────────────── Socket.IO + FastAPI ──────────────────
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
@@ -45,13 +46,31 @@ MODEL_TYPE = os.environ.get("MODEL_TYPE", "PPO").upper()
 
 model = load_model(model_type=MODEL_TYPE)
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 # DQN requires a discrete action wrapper; PPO/A2C use the raw env
 def make_env():
     base = NeonDriftEnv()
-    return DiscreteActionWrapper(base) if is_discrete(MODEL_TYPE) else base
+    if is_discrete(MODEL_TYPE):
+        base = DiscreteActionWrapper(base)
+    
+    # Apply VecNormalize if stats exist (needed for A2C)
+    vec_path = os.path.join(BASE_DIR, "models", f"{MODEL_TYPE.lower()}_vecnormalize.pkl")
+    if os.path.exists(vec_path):
+        print(f"[server] Loading VecNormalize stats from: {vec_path}")
+        vec_env = DummyVecEnv([lambda: base])
+        vec_env = VecNormalize.load(vec_path, vec_env)
+        vec_env.training = False
+        vec_env.norm_reward = False
+        return vec_env
+    return base
 
 env = make_env()
-obs, info = env.reset()
+obs = env.reset()
+if isinstance(obs, tuple):  # Gymnasium raw env returns (obs, info)
+    obs, info = obs
+else:
+    info = env.get_attr("_get_info")[0]() if hasattr(env, "get_attr") else {}
 
 print(f"[server] Algorithm : {MODEL_TYPE}")
 print(f"[server] Discrete  : {is_discrete(MODEL_TYPE)}")
@@ -109,13 +128,26 @@ async def disconnect(sid):
 async def game_loop(sid):
     """30 FPS game loop: predict → step → emit telemetry."""
     global obs, info
-    obs, info = env.reset()
+    obs = env.reset()
+    if isinstance(obs, tuple):
+        obs, info = obs
+    else:
+        info = env.get_attr("_get_info")[0]() if hasattr(env, "get_attr") else {}
 
     while True:
         # Check if client is still connected
         try:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
+            # Handle VecEnv arrays vs single env scalar returns
+            if hasattr(env, "get_attr"):  # It's a VecEnv
+                action, _ = model.predict(obs, deterministic=True)
+                obs, reward_arr, done_arr, info_arr = env.step(action)
+                reward = reward_arr[0]
+                terminated = done_arr[0]
+                truncated = False # VecEnv doesn't expose truncated separately
+                info = info_arr[0]
+            else:
+                action, _ = model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, info = env.step(action)
 
             lidar_rays = compute_lidar_ray_endpoints(info)
 
@@ -130,14 +162,15 @@ async def game_loop(sid):
                 "left_boundary": info["left_boundary"],
                 "right_boundary": info["right_boundary"],
                 "centerline": info["centerline"],
-                "state_vector": obs.tolist(),
+                "state_vector": obs[0].tolist() if hasattr(env, "get_attr") else obs.tolist(),
                 "progress_pct": float(info.get("progress_pct", 0.0)),
             }
 
             await sio.emit("telemetry", payload, to=sid)
 
             if terminated or truncated:
-                obs, info = env.reset()
+                obs = env.reset()
+                if isinstance(obs, tuple): obs = obs[0]
                 await sio.emit("reset", {}, to=sid)
 
             await asyncio.sleep(1 / 30)  # 30 FPS

@@ -25,11 +25,13 @@ MODEL_CLASSES = {
     "DQN": DQN,
 }
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 # Per-algorithm default paths (primary, fallback)
 MODEL_PATHS = {
-    "PPO": ("./models/ppo_best/best_model", "./models/ppo_final"),
-    "A2C": ("./models/a2c_best/best_model", "./models/a2c_final"),
-    "DQN": ("./models/dqn_best/best_model", "./models/dqn_final"),
+    "PPO": (os.path.join(BASE_DIR, "models", "ppo_best", "best_model"), os.path.join(BASE_DIR, "models", "ppo_final")),
+    "A2C": (os.path.join(BASE_DIR, "models", "a2c_best", "best_model"), os.path.join(BASE_DIR, "models", "a2c_final")),
+    "DQN": (os.path.join(BASE_DIR, "models", "dqn_best", "best_model"), os.path.join(BASE_DIR, "models", "dqn_final")),
 }
 
 # Algorithms that require DiscreteActionWrapper
@@ -87,12 +89,21 @@ def load_model(
     resolved_primary = primary_path if primary_path is not None else defaults[0]
     resolved_fallback = fallback_path if fallback_path is not None else defaults[1]
 
+    custom_objects = {
+        "lr_schedule": lambda _: 0.0,
+        "exploration_schedule": lambda _: 0.0,
+    }
+
     # SB3 appends .zip if not present, so check both variants
     for path in (resolved_primary, resolved_fallback):
         zip_path = path if path.endswith(".zip") else path + ".zip"
         if os.path.isfile(zip_path) or os.path.isfile(path):
             print(f"[model_loader] Loading {model_type} model from: {path}")
-            return cls.load(path)
+            try:
+                return cls.load(path, custom_objects=custom_objects)
+            except (ValueError, RuntimeError):
+                print(f"[model_loader] Optimizer mismatch — loading policy weights only...")
+                return _load_policy_only(cls, zip_path, model_type)
 
     raise FileNotFoundError(
         f"No trained {model_type} model found.\n"
@@ -100,3 +111,22 @@ def load_model(
         f"  Checked: {resolved_fallback}\n"
         f"Run  python train/train_{model_type.lower()}.py  first."
     )
+
+
+def _load_policy_only(cls, zip_path, model_type):
+    """Fallback: create fresh model, inject only the saved policy weights."""
+    import zipfile, io, torch
+    from env.neondrift_env import NeonDriftEnv, DiscreteActionWrapper
+
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zf.open('policy.pth') as f:
+            policy_state = torch.load(
+                io.BytesIO(f.read()), map_location='cpu', weights_only=False
+            )
+    base_env = NeonDriftEnv()
+    if is_discrete(model_type):
+        base_env = DiscreteActionWrapper(base_env)
+    model = cls("MlpPolicy", base_env, device="cpu")
+    model.policy.load_state_dict(policy_state)
+    print(f"[model_loader] Policy weights loaded successfully.")
+    return model

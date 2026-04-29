@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import numpy as np
 import matplotlib.pyplot as plt
 from stable_baselines3 import PPO, A2C, DQN
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from env.neondrift_env import NeonDriftEnv, DiscreteActionWrapper
 
@@ -68,8 +69,44 @@ def load_model(algo_name: str):
         zip_path = path if path.endswith(".zip") else path + ".zip"
         if os.path.isfile(zip_path) or os.path.isfile(path):
             print(f"  [{algo_name}] Loading from: {path}")
-            return cls.load(path)
+            custom_objects = {
+                "lr_schedule": lambda _: 0.0,
+                "exploration_schedule": lambda _: 0.0,
+            }
+            try:
+                return cls.load(path, custom_objects=custom_objects)
+            except (ValueError, RuntimeError) as e:
+                print(f"  [{algo_name}] Optimizer state mismatch — loading policy weights only...")
+                return _load_policy_only(cls, zip_path, algo_name)
     return None
+
+
+def _load_policy_only(cls, zip_path, algo_name):
+    """Fallback loader: create a fresh model, inject saved policy weights."""
+    import zipfile, io, torch
+
+    # 1. Extract policy weights from the checkpoint
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            with zf.open('policy.pth') as f:
+                policy_state = torch.load(
+                    io.BytesIO(f.read()), map_location='cpu', weights_only=False
+                )
+    except Exception as ex:
+        print(f"  [{algo_name}] Could not read policy.pth: {ex}")
+        return None
+
+    # 2. Create a fresh model with matching env
+    is_discrete = ALGORITHMS[algo_name]["discrete"]
+    base_env = NeonDriftEnv()
+    if is_discrete:
+        base_env = DiscreteActionWrapper(base_env)
+    model = cls("MlpPolicy", base_env, device="cpu")
+
+    # 3. Load only the policy network weights (skip optimizer)
+    model.policy.load_state_dict(policy_state)
+    print(f"  [{algo_name}] Policy weights loaded successfully (optimizer skipped).")
+    return model
 
 
 def evaluate_model(model, algo_name: str, n_episodes: int = N_EVAL_EPISODES):
@@ -85,26 +122,54 @@ def evaluate_model(model, algo_name: str, n_episodes: int = N_EVAL_EPISODES):
     }
 
     for ep in range(n_episodes):
+        base_env = NeonDriftEnv()
         if is_discrete:
-            env = DiscreteActionWrapper(NeonDriftEnv())
+            base_env = DiscreteActionWrapper(base_env)
+            
+        vec_path = f"./models/{algo_name.lower()}_vecnormalize.pkl"
+        if os.path.exists(vec_path):
+            env = DummyVecEnv([lambda: base_env])
+            env = VecNormalize.load(vec_path, env)
+            env.training = False
+            env.norm_reward = False
+            obs = env.reset()
+            info = env.get_attr("_get_info")[0]() if hasattr(env, "get_attr") else {}
         else:
-            env = NeonDriftEnv()
+            env = base_env
+            obs, info = env.reset()
 
-        obs, info = env.reset()
         total_reward = 0.0
         total_speed = 0.0
         steps = 0
         done = False
+        crashed = False
 
         while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            total_speed += info["speed"]
-            steps += 1
-            done = terminated or truncated
+            if hasattr(env, "get_attr"):  # VecEnv
+                expected_shape = model.observation_space.shape[0]
+                model_obs = obs[:, :expected_shape]
+                action, _ = model.predict(model_obs, deterministic=True)
+                obs, reward_arr, done_arr, info_arr = env.step(action)
+                total_reward += reward_arr[0]
+                total_speed += info_arr[0]["speed"]
+                steps += 1
+                done = done_arr[0]
+                if done:
+                    info = info_arr[0]
+                    crashed = reward_arr[0] <= -5.0  # Proxy for collision
+            else:
+                expected_shape = model.observation_space.shape[0]
+                model_obs = obs[:expected_shape]
+                action, _ = model.predict(model_obs, deterministic=True)
+                obs, reward, terminated, truncated, info = env.step(action)
+                total_reward += reward
+                total_speed += info["speed"]
+                steps += 1
+                done = terminated or truncated
+                if done:
+                    crashed = terminated and not truncated
 
-        if terminated and not truncated:
+        if crashed:
             results["crashes"] += 1
 
         results["rewards_per_step"].append(total_reward / max(steps, 1))
@@ -157,7 +222,7 @@ def print_comparison(all_results: dict):
     available = [a for a in ["PPO", "A2C", "DQN"] if a in all_results]
     if available:
         best = max(available, key=lambda a: np.mean(all_results[a]["rewards_per_step"]))
-        print(f"\n  🏆 Best overall: {best} (highest avg reward/step)")
+        print(f"\n  [WINNER] Best overall: {best} (highest avg reward/step)")
 
 
 def plot_comparison(all_results: dict, save_path: str = "comparison_results.png"):

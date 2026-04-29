@@ -58,12 +58,38 @@ def load_model(algo: str, model_name: str):
         f"./models/{algo.lower()}_best/best_model",
         f"./models/{algo.lower()}_final",
     ]
+    custom_objects = {
+        "lr_schedule": lambda _: 0.0,
+        "exploration_schedule": lambda _: 0.0,
+    }
     for path in paths:
         zip_path = path if path.endswith(".zip") else path + ".zip"
         if os.path.isfile(zip_path) or os.path.isfile(path):
             print(f"[simulate] Loading {algo} from: {path}")
-            return cls.load(path)
+            try:
+                return cls.load(path, custom_objects=custom_objects)
+            except (ValueError, RuntimeError):
+                print(f"[simulate] Optimizer mismatch — loading policy weights only...")
+                return _load_policy_only(cls, zip_path, algo)
     raise FileNotFoundError(f"No model found. Tried: {paths}")
+
+
+def _load_policy_only(cls, zip_path, algo):
+    """Fallback: create fresh model, inject only the saved policy weights."""
+    import zipfile, io, torch
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zf.open('policy.pth') as f:
+            policy_state = torch.load(
+                io.BytesIO(f.read()), map_location='cpu', weights_only=False
+            )
+    is_discrete = algo.upper() == "DQN"
+    base_env = NeonDriftEnv()
+    if is_discrete:
+        base_env = DiscreteActionWrapper(base_env)
+    model = cls("MlpPolicy", base_env, device="cpu")
+    model.policy.load_state_dict(policy_state)
+    print(f"[simulate] Policy weights loaded successfully.")
+    return model
 
 # ──────────────────────── Camera ───────────────────────────
 class Camera:
@@ -212,6 +238,12 @@ def draw_episode_end(surf, font, crashed, total_reward, progress):
 def main():
     args = parse_args()
 
+    # Auto-infer algo from model name
+    lower_name = args.model.lower()
+    if "ppo" in lower_name: args.algo = "PPO"
+    elif "a2c" in lower_name: args.algo = "A2C"
+    elif "dqn" in lower_name: args.algo = "DQN"
+
     # Load model
     model = load_model(args.algo, args.model)
     is_discrete = args.algo.upper() == "DQN"
@@ -237,8 +269,23 @@ def main():
     while episode < args.episodes:
         # Create env
         base_env = NeonDriftEnv()
-        env = DiscreteActionWrapper(base_env) if is_discrete else base_env
-        obs, info = env.reset()
+        if is_discrete:
+            base_env = DiscreteActionWrapper(base_env)
+            
+        vec_path = f"./models/{args.algo.lower()}_vecnormalize.pkl"
+        if os.path.exists(vec_path):
+            from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+            env = DummyVecEnv([lambda: base_env])
+            env = VecNormalize.load(vec_path, env)
+            env.training = False
+            env.norm_reward = False
+            obs = env.reset()
+            info = env.get_attr("_get_info")[0]() if hasattr(env, "get_attr") else {}
+            use_vec = True
+        else:
+            env = base_env
+            obs, info = env.reset()
+            use_vec = False
 
         # Fit camera to this track
         cam.fit_track(info["centerline"])
@@ -286,12 +333,25 @@ def main():
 
             # ── Simulation step ──────────────────────────────
             if not paused:
-                action, _ = model.predict(obs, deterministic=True)
-                obs, reward, terminated, truncated, info = env.step(action)
+                if use_vec:
+                    expected_shape = model.observation_space.shape[0]
+                    model_obs = obs[:, :expected_shape]
+                    action, _ = model.predict(model_obs, deterministic=True)
+                    obs, reward_arr, done_arr, info_arr = env.step(action)
+                    reward = reward_arr[0]
+                    info = info_arr[0]
+                    done = done_arr[0]
+                    crashed = reward <= -5.0
+                else:
+                    expected_shape = model.observation_space.shape[0]
+                    model_obs = obs[:expected_shape]
+                    action, _ = model.predict(model_obs, deterministic=True)
+                    obs, reward, terminated, truncated, info = env.step(action)
+                    done = terminated or truncated
+                    crashed = terminated and not truncated
+
                 total_reward += reward
                 steps        += 1
-                done          = terminated or truncated
-                crashed       = terminated and not truncated
 
                 if done:
                     all_rewards.append(total_reward)

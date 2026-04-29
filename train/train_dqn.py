@@ -22,7 +22,8 @@ support vectorised environments.
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, PROJECT_ROOT)
 
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import EvalCallback
@@ -31,8 +32,8 @@ from env.neondrift_env import NeonDriftEnv, DiscreteActionWrapper
 
 # ─────────────────── Shared Constants ──────────────────────
 TOTAL_TIMESTEPS = 1_000_000
-MODEL_SAVE_PATH = "./models/"
-LOG_PATH = "./logs/"
+MODEL_SAVE_PATH = os.path.join(PROJECT_ROOT, "models")
+LOG_PATH = os.path.join(PROJECT_ROOT, "logs")
 EVAL_FREQ = 10_000
 N_EVAL_EPISODES = 5
 
@@ -61,8 +62,8 @@ def main():
 
     eval_callback = EvalCallback(
         eval_env,
-        best_model_save_path=MODEL_SAVE_PATH + "dqn_best/",
-        log_path=LOG_PATH + "dqn_eval/",
+        best_model_save_path=os.path.join(MODEL_SAVE_PATH, "dqn_best"),
+        log_path=os.path.join(LOG_PATH, "dqn_eval"),
         eval_freq=EVAL_FREQ,
         n_eval_episodes=N_EVAL_EPISODES,
         deterministic=True,
@@ -76,7 +77,7 @@ def main():
     print("=" * 60)
 
     model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=eval_callback)
-    model.save(MODEL_SAVE_PATH + "dqn_final")
+    model.save(os.path.join(MODEL_SAVE_PATH, "dqn_final"))
     print("DQN training complete. Model saved.")
 
 

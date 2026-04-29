@@ -35,7 +35,7 @@ import gymnasium
 import numpy as np
 from gymnasium import spaces
 from matplotlib.path import Path as MplPath
-from scipy.signal import savgol_filter
+# scipy.signal.savgol_filter removed — was imported but never used
 
 # ──────────────────────── Constants ────────────────────────
 NUM_RAYS = 7
@@ -139,8 +139,12 @@ class NeonDriftEnv(gymnasium.Env):
         self.max_steps = max_steps
 
         # Observation: 7 LiDAR + speed + steering + progress + heading_align = 11
+        # Per-element bounds: LiDAR[0..6] in [0,1], speed in [0,1],
+        # steer in [-1,1], progress in [0,1], heading_align in [-1,1]
+        obs_low  = np.array([0]*7 + [0, -1, 0, -1], dtype=np.float32)
+        obs_high = np.array([1]*7 + [1,  1, 1,  1], dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(11,), dtype=np.float32
+            low=obs_low, high=obs_high, dtype=np.float32
         )
         # Continuous action: [steer_delta, throttle]
         self.action_space = spaces.Box(
@@ -167,6 +171,7 @@ class NeonDriftEnv(gymnasium.Env):
         # Progress tracking along centerline
         self.progress_index: int = 0
         self.prev_progress_index: int = 0
+        self.lap_completed: bool = False
 
         self.current_step = 0
 
@@ -363,6 +368,12 @@ class NeonDriftEnv(gymnasium.Env):
         # Only accept forward progress (ignore tiny noise or backward jumps)
         if delta > 0 and delta < search_range:
             self.progress_index = best_idx
+            # Lap completion: passed ≥ 95 % of centerline points and
+            # the car is back near the start of the track
+            if self.progress_index >= int(n * 0.95):
+                start_pt = np.asarray(self.centerline[0])
+                if np.linalg.norm(car_pos - start_pt) < TRACK_HALF_WIDTH * 2:
+                    self.lap_completed = True
             return delta
         return 0
 
@@ -390,6 +401,7 @@ class NeonDriftEnv(gymnasium.Env):
         self.current_step = 0
         self.progress_index = 0
         self.prev_progress_index = 0
+        self.lap_completed = False
         return self._get_obs(), self._get_info()
 
     # ═══════════════ Gymnasium API: step ════════════════════
@@ -402,7 +414,7 @@ class NeonDriftEnv(gymnasium.Env):
 
         # Update steering (more responsive for high-speed racing)
         self.car_steer = np.clip(
-            self.car_steer + steer_delta * 0.15, -MAX_STEER, MAX_STEER
+            self.car_steer + steer_delta * 0.3, -MAX_STEER, MAX_STEER
         )
         # Update speed (faster acceleration for racing feel)
         self.car_speed += throttle * 1.0
@@ -437,7 +449,10 @@ class NeonDriftEnv(gymnasium.Env):
         smooth_penalty = -0.05 * steer_change
 
         if self._check_collision():
-            reward = -50.0
+            reward = -10.0
+            terminated = True
+        elif self.lap_completed:
+            reward = time_penalty + progress_reward + speed_bonus + smooth_penalty + 100.0
             terminated = True
         else:
             reward = time_penalty + progress_reward + speed_bonus + smooth_penalty

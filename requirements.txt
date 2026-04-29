@@ -8,3 +8,4 @@ python-socketio==5.11.1
 matplotlib>=3.7.0
 pygame>=2.5.0
 scipy>=1.11.0
+tensorboard>=2.14.0
