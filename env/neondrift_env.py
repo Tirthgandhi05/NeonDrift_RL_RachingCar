@@ -35,7 +35,6 @@ import gymnasium
 import numpy as np
 from gymnasium import spaces
 from matplotlib.path import Path as MplPath
-# scipy.signal.savgol_filter removed — was imported but never used
 
 # ──────────────────────── Constants ────────────────────────
 NUM_RAYS = 7
@@ -370,7 +369,7 @@ class NeonDriftEnv(gymnasium.Env):
             self.progress_index = best_idx
             # Lap completion: passed ≥ 95 % of centerline points and
             # the car is back near the start of the track
-            if self.progress_index >= int(n * 0.95):
+            if self.progress_index >= int(n * 0.99):
                 start_pt = np.asarray(self.centerline[0])
                 if np.linalg.norm(car_pos - start_pt) < TRACK_HALF_WIDTH * 2:
                     self.lap_completed = True
@@ -389,6 +388,8 @@ class NeonDriftEnv(gymnasium.Env):
             "right_boundary": self.right_boundary,
             "centerline": self.centerline,
             "progress_pct": (self.progress_index / max(len(self.centerline), 1)) * 100,
+            "crashed": self._check_collision(),
+            "lap_completed": self.lap_completed,
         }
 
     # ═══════════════ Gymnasium API: reset ═══════════════════

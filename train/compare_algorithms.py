@@ -11,6 +11,7 @@ Metrics collected per algorithm:
     • Average speed
     • Average lap progress (%)
     • Crash rate (% of episodes ending in collision)
+    • Lap completion rate (% of episodes where agent finished the lap)
 
 Usage:
     python train/compare_algorithms.py
@@ -119,6 +120,7 @@ def evaluate_model(model, algo_name: str, n_episodes: int = N_EVAL_EPISODES):
         "avg_speeds": [],
         "progress_pcts": [],
         "crashes": 0,
+        "lap_completions": 0,
     }
 
     for ep in range(n_episodes):
@@ -156,7 +158,8 @@ def evaluate_model(model, algo_name: str, n_episodes: int = N_EVAL_EPISODES):
                 done = done_arr[0]
                 if done:
                     info = info_arr[0]
-                    crashed = reward_arr[0] <= -5.0  # Proxy for collision
+                    crashed = info.get("crashed", False)
+                    lap_done = info.get("lap_completed", False)
             else:
                 expected_shape = model.observation_space.shape[0]
                 model_obs = obs[:expected_shape]
@@ -167,10 +170,13 @@ def evaluate_model(model, algo_name: str, n_episodes: int = N_EVAL_EPISODES):
                 steps += 1
                 done = terminated or truncated
                 if done:
-                    crashed = terminated and not truncated
+                    crashed = info.get("crashed", False)
+                    lap_done = info.get("lap_completed", False)
 
         if crashed:
             results["crashes"] += 1
+        if lap_done:
+            results["lap_completions"] += 1
 
         results["rewards_per_step"].append(total_reward / max(steps, 1))
         results["steps_survived"].append(steps)
@@ -199,6 +205,7 @@ def print_comparison(all_results: dict):
         ("Avg Speed (u/s)", "avg_speeds", "{:.2f}"),
         ("Avg Lap Progress (%)", "progress_pcts", "{:.1f}"),
         ("Crash Rate (%)", None, None),  # special
+        ("Lap Completion (%)", None, None),  # special
     ]
 
     for label, key, fmt in metrics:
@@ -211,9 +218,12 @@ def print_comparison(all_results: dict):
             if key is not None:
                 val = np.mean(r[key])
                 row += f"{fmt.format(val):>12}"
-            else:
+            elif label == "Crash Rate (%)":
                 crash_pct = (r["crashes"] / N_EVAL_EPISODES) * 100
                 row += f"{crash_pct:>11.0f}%"
+            elif label == "Lap Completion (%)":
+                lap_pct = (r["lap_completions"] / N_EVAL_EPISODES) * 100
+                row += f"{lap_pct:>11.0f}%"
         print(row)
 
     print("=" * 80)
@@ -238,21 +248,22 @@ def plot_comparison(all_results: dict, save_path: str = "comparison_results.png"
         "Avg Speed (u/s)": [np.mean(all_results[a]["avg_speeds"]) for a in available],
         "Lap Progress (%)": [np.mean(all_results[a]["progress_pcts"]) for a in available],
         "Crash Rate (%)": [(all_results[a]["crashes"] / N_EVAL_EPISODES) * 100 for a in available],
+        "Lap Completion (%)": [(all_results[a]["lap_completions"] / N_EVAL_EPISODES) * 100 for a in available],
     }
 
     colors = {"PPO": "#00FFFF", "A2C": "#FF00AA", "DQN": "#FFFF00"}
     bar_colors = [colors.get(a, "#FFFFFF") for a in available]
 
-    fig, axes = plt.subplots(1, 5, figsize=(20, 5))
-    fig.suptitle("NeonDrift — Algorithm Comparison (PPO vs A2C vs DQN)",
-                 fontsize=14, fontweight="bold", color="white")
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle("NeonDrift - Algorithm Comparison (PPO vs A2C vs DQN)",
+                 fontsize=16, fontweight="bold", color="white")
     fig.patch.set_facecolor("#0A0A14")
 
-    for ax, (metric_name, values) in zip(axes, metrics.items()):
+    for ax, (metric_name, values) in zip(axes.flat, metrics.items()):
         bars = ax.bar(available, values, color=bar_colors, edgecolor="white", linewidth=0.5)
-        ax.set_title(metric_name, fontsize=10, color="white")
+        ax.set_title(metric_name, fontsize=12, color="white")
         ax.set_facecolor("#0A0A14")
-        ax.tick_params(colors="white")
+        ax.tick_params(colors="white", labelsize=10)
         ax.spines["bottom"].set_color("white")
         ax.spines["left"].set_color("white")
         ax.spines["top"].set_visible(False)
@@ -261,11 +272,11 @@ def plot_comparison(all_results: dict, save_path: str = "comparison_results.png"
         # Add value labels on bars
         for bar, val in zip(bars, values):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{val:.1f}", ha="center", va="bottom", fontsize=9, color="white")
+                    f"{val:.1f}", ha="center", va="bottom", fontsize=10, color="white")
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, facecolor="#0A0A14", bbox_inches="tight")
-    print(f"\n  📊 Chart saved to: {save_path}")
+    print(f"\n  Chart saved to: {save_path}")
 
 
 # ─────────────────── Main ─────────────────────────────────
