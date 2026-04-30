@@ -152,7 +152,7 @@ PPO's epsilon-clipping constraint (`clip_range=0.2`) prevents excessively large 
 | **Progress reward** | `+1.0 × Δprogress` | Rewards advancing along the track centerline |
 | **Speed bonus** | `+0.05 × speed` | Small additional speed signal |
 | **Smoothness penalty** | `-0.05 × \|Δsteer\|` | Discourages jerky steering |
-| **Collision** | `-50` (terminal) | Crash ends the episode |
+| **Collision** | `-10` (terminal) | Crash ends the episode |
 
 **Design philosophy:** No wall proximity penalty — in real racing (F1), optimal racing lines involve getting close to walls on corners (apex clipping). The agent learns its own risk tolerance.
 
