@@ -1,8 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
-
-const SOCKET_URL = "http://localhost:8000";
-
+const SOCKET_URL = import.meta.env.VITE_WS_URL || "http://localhost:8000";
 /**
  * useSocket — Custom hook for Socket.IO connection to the NeonDrift
  * inference server.
