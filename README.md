@@ -171,8 +171,3 @@ NeonDrift/
 | **Collision** | `-10` (terminal) | Crash ends the episode |
 
 ---
-
-## Author
-
-**Tirth Kaushal Gandhi** — B.Tech. (Honours) ICT, Dhirubhai Ambani University  
-[LinkedIn](https://linkedin.com/in/TirthGandhi) · [GitHub](https://github.com/Tirthgandhi05)
