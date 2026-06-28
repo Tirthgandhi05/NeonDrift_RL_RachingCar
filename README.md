@@ -1,6 +1,18 @@
 <div align="center">
+  <img src="assets/logo.png" width="350" alt="NeonDrift Logo"/>
   <h1>NeonDrift: Centralized Fleet Intelligence</h1>
   <p><b>A high-performance, full-stack Reinforcement Learning application prototyping a centralized server architecture for real-time autonomous agent coordination.</b></p>
+
+  <br/>
+
+  [![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+  [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://reactjs.org)
+  [![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-005CED?style=flat-square)](https://onnxruntime.ai)
+  [![Stable Baselines3](https://img.shields.io/badge/Stable_Baselines3-PPO%20%7C%20A2C%20%7C%20DQN-FF6F61?style=flat-square)](https://stable-baselines3.readthedocs.io)
+  [![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com)
+  [![Release](https://img.shields.io/github/v/release/Tirthgandhi05/NeonDrift_RL_RachingCar?style=flat-square&label=models)](https://github.com/Tirthgandhi05/NeonDrift_RL_RachingCar/releases/latest)
+
 </div>
 
 <br/>
@@ -57,6 +69,8 @@ All three models are exported to ONNX and selectable live from the frontend — 
 ---
 
 ## 💻 Local Development
+
+> **Pre-trained models:** Download the ONNX files from the [latest release](https://github.com/Tirthgandhi05/NeonDrift_RL_RachingCar/releases/latest) and place them in the `models/` directory. The server loads them automatically on startup. Alternatively, train from scratch using the scripts below.
 
 **With Docker:**
 ```bash
@@ -129,7 +143,7 @@ NeonDrift/
 │       │   ├── RaceCanvas.jsx           # HTML5 Canvas: track, car, LiDAR rays
 │       │   └── TelemetryPanel.jsx       # Right panel: gauges, graphs, state vector
 │       └── hooks/useSocket.js
-├── models/
+├── models/                              # Place downloaded ONNX files here
 ├── docker-compose.yml
 └── requirements.txt
 ```
